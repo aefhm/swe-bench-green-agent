@@ -1,4 +1,5 @@
 import json
+import logging
 from uuid import uuid4
 
 import httpx
@@ -6,7 +7,6 @@ from a2a.client import (
     A2ACardResolver,
     ClientConfig,
     ClientFactory,
-    Consumer,
 )
 from a2a.types import (
     Message,
@@ -16,8 +16,9 @@ from a2a.types import (
     DataPart,
 )
 
+logger = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT = 300
+DEFAULT_TIMEOUT = 600  # 10 minutes — coding agents need time
 
 
 def create_message(
@@ -48,26 +49,26 @@ async def send_message(
     context_id: str | None = None,
     streaming: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
-    consumer: Consumer | None = None,
 ):
     """Returns dict with context_id, response and status (if exists)"""
     async with httpx.AsyncClient(timeout=timeout) as httpx_client:
         resolver = A2ACardResolver(httpx_client=httpx_client, base_url=base_url)
         agent_card = await resolver.get_agent_card()
+        # Override the card's self-reported URL with the URL we actually used
+        # to reach it — the card may advertise 0.0.0.0 which isn't routable
+        # between containers.
+        agent_card.url = base_url.rstrip("/") + "/"
         config = ClientConfig(
             httpx_client=httpx_client,
             streaming=streaming,
         )
         factory = ClientFactory(config)
         client = factory.create(agent_card)
-        if consumer:
-            await client.add_event_consumer(consumer)
 
         outbound_msg = create_message(text=message, context_id=context_id)
         last_event = None
         outputs = {"response": "", "context_id": None}
 
-        # if streaming == False, only one event is generated
         async for event in client.send_message(outbound_msg):
             last_event = event
 
@@ -109,8 +110,8 @@ class Messenger:
         Args:
             message: The message to send to the agent
             url: The agent's URL endpoint
-            new_conversation: If True, start fresh conversation; if False, continue existing conversation
-            timeout: Timeout in seconds for the request (default: 300)
+            new_conversation: If True, start fresh conversation; if False, continue existing
+            timeout: Timeout in seconds for the request (default: 600)
 
         Returns:
             str: The agent's response message
