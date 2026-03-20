@@ -16,8 +16,9 @@ Flow:
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Awaitable
 
 from pydantic import BaseModel, HttpUrl, ValidationError
 from a2a.server.tasks import TaskUpdater
@@ -26,6 +27,11 @@ from a2a.utils import get_message_text, new_agent_text_message
 
 from messenger import Messenger
 from evaluator import evaluate_patch, get_dockerhub_image_uri, EvalResult
+
+logger = logging.getLogger(__name__)
+
+# Type for optional progress callback: async (message_str) -> None
+ProgressCallback = Callable[[str], Awaitable[None]] | None
 
 
 class EvalRequest(BaseModel):
@@ -88,41 +94,31 @@ class Agent:
         max_instances = config.get("max_instances", len(instances))
         return instances[:max_instances]
 
-    async def run(self, message: Message, updater: TaskUpdater) -> None:
-        input_text = get_message_text(message)
+    async def run_batch(
+        self,
+        config: dict[str, Any],
+        participant_url: str,
+        on_progress: ProgressCallback = None,
+    ) -> dict:
+        """Run evaluation batch and return structured results dict.
 
-        try:
-            request = EvalRequest.model_validate_json(input_text)
-            ok, msg = self.validate_request(request)
-            if not ok:
-                await updater.reject(new_agent_text_message(msg))
-                return
-        except ValidationError as e:
-            await updater.reject(new_agent_text_message(f"Invalid request: {e}"))
-            return
+        This is the core evaluation loop, usable from both the A2A handler (run)
+        and the auto-start /results path.
 
-        participant_url = str(
-            request.participants.get("coding_agent")
-            or self.coding_agent_url
-            or ""
-        )
-        if not participant_url:
-            await updater.reject(
-                new_agent_text_message("No coding_agent URL in request and CODING_AGENT_URL not set")
-            )
-            return
-        instances = self._select_instances(request.config)
+        Args:
+            config: Instance selection config (instances, instance_ids, max_instances)
+            participant_url: URL of the coding agent to evaluate
+            on_progress: Optional async callback for status updates
 
+        Returns:
+            Dict with accuracy, passed, total, and per-instance results
+        """
+        instances = self._select_instances(config)
         if not instances:
-            await updater.reject(
-                new_agent_text_message("No matching instances found for the given config")
-            )
-            return
+            raise ValueError("No matching instances found for the given config")
 
-        await updater.update_status(
-            TaskState.working,
-            new_agent_text_message(f"Starting evaluation of {len(instances)} instance(s)..."),
-        )
+        if on_progress:
+            await on_progress(f"Starting evaluation of {len(instances)} instance(s)...")
 
         results: list[EvalResult] = []
 
@@ -131,12 +127,10 @@ class Agent:
             repo = instance.get("repo", "")
             image_uri = get_dockerhub_image_uri(uid, self.dockerhub_username, repo)
 
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
+            if on_progress:
+                await on_progress(
                     f"[{i + 1}/{len(instances)}] Sending instance {uid} to participant..."
-                ),
-            )
+                )
 
             # Build the problem message for the participant
             problem_payload = json.dumps(
@@ -160,6 +154,7 @@ class Agent:
                     timeout=1800,  # 30 min per instance
                 )
             except Exception as e:
+                logger.error(f"Participant communication error for {uid}: {e}")
                 results.append(
                     EvalResult(
                         instance_id=uid,
@@ -186,12 +181,10 @@ class Agent:
                 continue
 
             # Evaluate the patch
-            await updater.update_status(
-                TaskState.working,
-                new_agent_text_message(
+            if on_progress:
+                await on_progress(
                     f"[{i + 1}/{len(instances)}] Evaluating patch for {uid}..."
-                ),
-            )
+                )
 
             result = evaluate_patch(
                 instance=instance,
@@ -201,21 +194,18 @@ class Agent:
             )
             results.append(result)
 
+            # Remove the pulled evaluation image to reclaim disk space.
+            # Each instance uses a different project-specific image (~1-2 GB),
+            # so without cleanup they accumulate and can fill the runner disk.
+            self._cleanup_eval_image(uid, repo)
+
         # Compute summary
         total = len(results)
         passed = sum(1 for r in results if r.passed)
         accuracy = passed / total if total > 0 else 0.0
 
-        summary_text = (
-            f"SWE-bench Pro Evaluation Complete\n"
-            f"Accuracy: {accuracy:.1%} ({passed}/{total})\n\n"
-        )
-        for r in results:
-            status = "PASS" if r.passed else "FAIL"
-            detail = f"  error: {r.error}" if r.error else ""
-            summary_text += f"  [{status}] {r.instance_id}{detail}\n"
-
-        structured_results = {
+        return {
+            "status": "completed",
             "accuracy": accuracy,
             "passed": passed,
             "total": total,
@@ -231,6 +221,61 @@ class Agent:
             ],
         }
 
+    async def run(self, message: Message, updater: TaskUpdater) -> None:
+        """A2A message handler — parses request, delegates to run_batch."""
+        input_text = get_message_text(message)
+
+        try:
+            request = EvalRequest.model_validate_json(input_text)
+            ok, msg = self.validate_request(request)
+            if not ok:
+                await updater.reject(new_agent_text_message(msg))
+                return
+        except ValidationError as e:
+            await updater.reject(new_agent_text_message(f"Invalid request: {e}"))
+            return
+
+        participant_url = str(
+            request.participants.get("coding_agent")
+            or self.coding_agent_url
+            or ""
+        )
+        if not participant_url:
+            await updater.reject(
+                new_agent_text_message("No coding_agent URL in request and CODING_AGENT_URL not set")
+            )
+            return
+
+        await updater.update_status(
+            TaskState.working,
+            new_agent_text_message("Starting evaluation..."),
+        )
+
+        async def on_progress(msg_text: str):
+            await updater.update_status(
+                TaskState.working,
+                new_agent_text_message(msg_text),
+            )
+
+        try:
+            structured_results = await self.run_batch(
+                request.config, participant_url, on_progress=on_progress
+            )
+        except ValueError as e:
+            await updater.reject(new_agent_text_message(str(e)))
+            return
+
+        # Format summary text for the A2A artifact
+        summary_text = (
+            f"SWE-bench Pro Evaluation Complete\n"
+            f"Accuracy: {structured_results['accuracy']:.1%} "
+            f"({structured_results['passed']}/{structured_results['total']})\n\n"
+        )
+        for r in structured_results["results"]:
+            status = "PASS" if r["passed"] else "FAIL"
+            detail = f"  error: {r['error']}" if r.get("error") else ""
+            summary_text += f"  [{status}] {r['instance_id']}{detail}\n"
+
         await updater.add_artifact(
             parts=[
                 Part(root=TextPart(text=summary_text)),
@@ -238,6 +283,20 @@ class Agent:
             ],
             name="SWE-bench Pro Evaluation Results",
         )
+
+    def _cleanup_eval_image(self, uid: str, repo: str) -> None:
+        """Remove the pulled sweap evaluation image to reclaim disk space."""
+        try:
+            import docker as docker_sdk
+
+            client = docker_sdk.from_env()
+            image_uri = get_dockerhub_image_uri(uid, self.dockerhub_username, repo)
+            client.images.remove(image_uri, force=True)
+            logger.info(f"Removed eval image: {image_uri}")
+        except Exception as e:
+            # Non-fatal — log and continue. The image may already have been
+            # removed or may not exist (e.g. pull failed earlier).
+            logger.warning(f"Failed to remove eval image for {uid}: {e}")
 
     def _extract_patch(self, response: str) -> str | None:
         """Extract a git diff patch from the participant's response.

@@ -1,162 +1,308 @@
-from typing import Any
+"""Unit tests for agent.py — _select_instances, run_batch, _extract_patch, _cleanup_eval_image.
+
+These tests mock the messenger and evaluator so they can run without
+Docker, a coding agent, or any network access.
+"""
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, patch, MagicMock
+
 import pytest
-import httpx
-from uuid import uuid4
 
-from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
-from a2a.types import Message, Part, Role, TextPart
+# Add src to path so we can import directly
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-
-# A2A validation helpers
-
-def validate_agent_card(card_data: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    required_fields = frozenset([
-        "name", "description", "url", "version",
-        "capabilities", "defaultInputModes", "defaultOutputModes", "skills",
-    ])
-    for field in required_fields:
-        if field not in card_data:
-            errors.append(f"Required field is missing: '{field}'.")
-
-    if "url" in card_data and not (
-        card_data["url"].startswith("http://") or card_data["url"].startswith("https://")
-    ):
-        errors.append("Field 'url' must be an absolute URL.")
-
-    if "capabilities" in card_data and not isinstance(card_data["capabilities"], dict):
-        errors.append("Field 'capabilities' must be an object.")
-
-    for field in ["defaultInputModes", "defaultOutputModes"]:
-        if field in card_data:
-            if not isinstance(card_data[field], list):
-                errors.append(f"Field '{field}' must be an array of strings.")
-            elif not all(isinstance(item, str) for item in card_data[field]):
-                errors.append(f"All items in '{field}' must be strings.")
-
-    if "skills" in card_data:
-        if not isinstance(card_data["skills"], list):
-            errors.append("Field 'skills' must be an array.")
-        elif not card_data["skills"]:
-            errors.append("Field 'skills' array is empty.")
-
-    return errors
+from agent import Agent
+from evaluator import EvalResult
 
 
-def validate_event(data: dict[str, Any]) -> list[str]:
-    if "kind" not in data:
-        return ["Response missing 'kind' field."]
-    kind = data.get("kind")
-    if kind == "task":
-        errors = []
-        if "id" not in data:
-            errors.append("Task missing 'id'.")
-        if "status" not in data or "state" not in data.get("status", {}):
-            errors.append("Task missing 'status.state'.")
-        return errors
-    elif kind == "status-update":
-        if "status" not in data or "state" not in data.get("status", {}):
-            return ["StatusUpdate missing 'status.state'."]
-        return []
-    elif kind == "artifact-update":
-        if "artifact" not in data:
-            return ["ArtifactUpdate missing 'artifact'."]
-        artifact = data.get("artifact", {})
-        if not artifact.get("parts"):
-            return ["Artifact must have non-empty 'parts'."]
-        return []
-    elif kind == "message":
-        errors = []
-        if not data.get("parts"):
-            errors.append("Message must have non-empty 'parts'.")
-        if data.get("role") != "agent":
-            errors.append("Message from agent must have role 'agent'.")
-        return errors
-    return [f"Unknown kind: '{kind}'."]
+@pytest.fixture
+def data_dir(tmp_path):
+    """Create a temp data dir with a minimal instances.jsonl."""
+    instances = [
+        {
+            "instance_id": "test__repo-abc123",
+            "short_id": "test-001",
+            "repo": "test/repo",
+            "problem_statement": "Fix the bug",
+            "base_commit": "abc123",
+            "hints_text": "",
+        },
+        {
+            "instance_id": "test__repo-def456",
+            "short_id": "test-002",
+            "repo": "test/repo",
+            "problem_statement": "Add the feature",
+            "base_commit": "def456",
+            "hints_text": "",
+        },
+        {
+            "instance_id": "test__repo-ghi789",
+            "short_id": "test-003",
+            "repo": "test/repo",
+            "problem_statement": "Refactor the module",
+            "base_commit": "ghi789",
+            "hints_text": "",
+        },
+    ]
+    instances_path = tmp_path / "instances.jsonl"
+    with open(instances_path, "w") as f:
+        for inst in instances:
+            f.write(json.dumps(inst) + "\n")
+    return str(tmp_path)
 
 
-async def send_text_message(text: str, url: str, context_id: str | None = None, streaming: bool = False):
-    async with httpx.AsyncClient(timeout=30) as httpx_client:
-        resolver = A2ACardResolver(httpx_client=httpx_client, base_url=url)
-        agent_card = await resolver.get_agent_card()
-        config = ClientConfig(httpx_client=httpx_client, streaming=streaming)
-        factory = ClientFactory(config)
-        client = factory.create(agent_card)
+@pytest.fixture
+def agent(data_dir):
+    return Agent(
+        data_dir=data_dir,
+        dockerhub_username="testuser",
+        coding_agent_url="http://fake-agent:9009",
+    )
 
-        msg = Message(
-            kind="message",
-            role=Role.user,
-            parts=[Part(TextPart(text=text))],
-            message_id=uuid4().hex,
-            context_id=context_id,
+
+# ── _select_instances ─────────────────────────────────────────────
+
+
+class TestSelectInstances:
+    def test_select_all(self, agent):
+        result = agent._select_instances({})
+        assert len(result) == 3
+
+    def test_select_by_short_id(self, agent):
+        result = agent._select_instances({"instances": ["test-001", "test-003"]})
+        assert len(result) == 2
+        assert result[0]["short_id"] == "test-001"
+        assert result[1]["short_id"] == "test-003"
+
+    def test_select_by_instance_id(self, agent):
+        result = agent._select_instances({"instance_ids": ["test__repo-def456"]})
+        assert len(result) == 1
+
+    def test_max_instances(self, agent):
+        result = agent._select_instances({"max_instances": 2})
+        assert len(result) == 2
+
+    def test_no_match(self, agent):
+        result = agent._select_instances({"instances": ["nonexistent"]})
+        assert len(result) == 0
+
+
+# ── run_batch ─────────────────────────────────────────────────────
+
+
+class TestRunBatch:
+    @pytest.mark.asyncio
+    async def test_run_batch_success(self, agent):
+        """run_batch should return structured results."""
+        mock_eval_result = EvalResult(
+            instance_id="test__repo-abc123",
+            passed=True,
+            fail_to_pass_ok=True,
+            pass_to_pass_ok=True,
         )
-        events = [event async for event in client.send_message(msg)]
-    return events
+
+        with patch.object(agent.messenger, "talk_to_agent", new_callable=AsyncMock) as mock_talk, \
+             patch("agent.evaluate_patch", return_value=mock_eval_result), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"), \
+             patch.object(agent, "_cleanup_eval_image"):
+
+            mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
+
+            result = await agent.run_batch(
+                config={"instances": ["test-001"]},
+                participant_url="http://fake-agent:9009",
+            )
+
+        assert result["status"] == "completed"
+        assert result["total"] == 1
+        assert result["passed"] == 1
+        assert result["accuracy"] == 1.0
+        assert len(result["results"]) == 1
+        assert result["results"][0]["passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_batch_participant_error(self, agent):
+        """run_batch should handle participant communication errors gracefully."""
+        with patch.object(agent.messenger, "talk_to_agent", new_callable=AsyncMock) as mock_talk, \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"):
+
+            mock_talk.side_effect = RuntimeError("Connection refused")
+
+            result = await agent.run_batch(
+                config={"instances": ["test-001"]},
+                participant_url="http://fake-agent:9009",
+            )
+
+        assert result["status"] == "completed"
+        assert result["total"] == 1
+        assert result["passed"] == 0
+        assert "communication error" in result["results"][0]["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_run_batch_empty_patch(self, agent):
+        """run_batch should handle empty patches gracefully."""
+        with patch.object(agent.messenger, "talk_to_agent", new_callable=AsyncMock) as mock_talk, \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"):
+
+            mock_talk.return_value = ""
+
+            result = await agent.run_batch(
+                config={"instances": ["test-001"]},
+                participant_url="http://fake-agent:9009",
+            )
+
+        assert result["total"] == 1
+        assert result["passed"] == 0
+        assert "empty" in result["results"][0]["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_run_batch_no_instances(self, agent):
+        """run_batch should raise ValueError when no instances match."""
+        with pytest.raises(ValueError, match="No matching instances"):
+            await agent.run_batch(
+                config={"instances": ["nonexistent"]},
+                participant_url="http://fake-agent:9009",
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_batch_progress_callback(self, agent):
+        """run_batch should call the progress callback."""
+        progress_messages = []
+
+        async def on_progress(msg):
+            progress_messages.append(msg)
+
+        mock_eval_result = EvalResult(
+            instance_id="test__repo-abc123",
+            passed=True,
+            fail_to_pass_ok=True,
+            pass_to_pass_ok=True,
+        )
+
+        with patch.object(agent.messenger, "talk_to_agent", new_callable=AsyncMock) as mock_talk, \
+             patch("agent.evaluate_patch", return_value=mock_eval_result), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"), \
+             patch.object(agent, "_cleanup_eval_image"):
+
+            mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
+
+            await agent.run_batch(
+                config={"instances": ["test-001"]},
+                participant_url="http://fake-agent:9009",
+                on_progress=on_progress,
+            )
+
+        assert len(progress_messages) >= 2  # at least "Starting..." and one instance update
+        assert any("Starting" in m for m in progress_messages)
+
+    @pytest.mark.asyncio
+    async def test_run_batch_multiple_instances(self, agent):
+        """run_batch should process multiple instances."""
+        call_count = 0
+
+        async def mock_talk(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return '{"patch": "diff --git a/foo b/foo"}'
+
+        mock_eval_result = EvalResult(
+            instance_id="test",
+            passed=True,
+            fail_to_pass_ok=True,
+            pass_to_pass_ok=True,
+        )
+
+        with patch.object(agent.messenger, "talk_to_agent", side_effect=mock_talk), \
+             patch("agent.evaluate_patch", return_value=mock_eval_result), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"), \
+             patch.object(agent, "_cleanup_eval_image"):
+
+            result = await agent.run_batch(
+                config={"instances": ["test-001", "test-002"]},
+                participant_url="http://fake-agent:9009",
+            )
+
+        assert result["total"] == 2
+        assert call_count == 2
 
 
-# Tests
-
-def test_agent_card(agent):
-    """Validate agent card structure and required fields."""
-    response = httpx.get(f"{agent}/.well-known/agent-card.json")
-    assert response.status_code == 200
-    card_data = response.json()
-    errors = validate_agent_card(card_data)
-    assert not errors, f"Agent card validation failed:\n" + "\n".join(errors)
-
-    # SWE-bench specific checks
-    assert "swe-bench" in card_data["name"].lower() or "swe-bench" in card_data["description"].lower(), \
-        "Agent card should mention SWE-bench"
-    assert len(card_data["skills"]) >= 1, "Agent should have at least one skill"
+# ── _extract_patch ────────────────────────────────────────────────
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("streaming", [True, False])
-async def test_message(agent, streaming):
-    """Test that agent returns valid A2A message format."""
-    events = await send_text_message("Hello", agent, streaming=streaming)
+class TestExtractPatch:
+    def test_json_with_patch_key(self, agent):
+        response = '{"patch": "diff --git a/foo b/foo\\n--- a/foo\\n+++ b/foo"}'
+        assert agent._extract_patch(response).startswith("diff --git")
 
-    all_errors = []
-    for event in events:
-        match event:
-            case Message() as msg:
-                errors = validate_event(msg.model_dump())
-                all_errors.extend(errors)
+    def test_markdown_code_block(self, agent):
+        response = "Here is the fix:\n```diff\ndiff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n```"
+        assert agent._extract_patch(response).startswith("diff --git")
 
-            case (task, update):
-                errors = validate_event(task.model_dump())
-                all_errors.extend(errors)
-                if update:
-                    errors = validate_event(update.model_dump())
-                    all_errors.extend(errors)
+    def test_raw_diff(self, agent):
+        response = "diff --git a/foo b/foo\n--- a/foo\n+++ b/foo"
+        assert agent._extract_patch(response).startswith("diff --git")
 
-            case _:
-                pytest.fail(f"Unexpected event type: {type(event)}")
+    def test_empty_response(self, agent):
+        assert agent._extract_patch("") is None
+        assert agent._extract_patch("   ") is None
 
-    assert events, "Agent should respond with at least one event"
-    assert not all_errors, f"Message validation failed:\n" + "\n".join(all_errors)
+    def test_none_response(self, agent):
+        assert agent._extract_patch(None) is None
+
+    def test_json_embedded_in_text(self, agent):
+        response = 'Status: working on it\n{"patch": "diff --git a/f b/f"}'
+        result = agent._extract_patch(response)
+        assert result is not None
+        assert "diff" in result
+
+    def test_plain_text_fallback(self, agent):
+        """Non-diff text should be returned as last resort."""
+        response = "some random text"
+        assert agent._extract_patch(response) == "some random text"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("streaming", [True, False])
-async def test_invalid_request_rejected(agent, streaming):
-    """Test that invalid requests are properly rejected."""
-    events = await send_text_message("not valid json", agent, streaming=streaming)
-    assert events, "Agent should respond with at least one event"
+# ── _cleanup_eval_image ───────────────────────────────────────────
 
-    # Should get a rejection
-    all_errors = []
-    for event in events:
-        match event:
-            case Message() as msg:
-                errors = validate_event(msg.model_dump())
-                all_errors.extend(errors)
-            case (task, update):
-                errors = validate_event(task.model_dump())
-                all_errors.extend(errors)
-                if update:
-                    errors = validate_event(update.model_dump())
-                    all_errors.extend(errors)
-            case _:
-                pass
-    assert not all_errors, f"Event validation failed:\n" + "\n".join(all_errors)
+
+class TestCleanupEvalImage:
+    def _mock_docker(self):
+        """Create a mock docker module for patching the lazy import."""
+        mock_module = MagicMock()
+        return mock_module
+
+    def test_cleanup_removes_image(self, agent):
+        """_cleanup_eval_image should call docker images.remove."""
+        mock_docker = self._mock_docker()
+        mock_client = mock_docker.from_env.return_value
+
+        with patch.dict("sys.modules", {"docker": mock_docker}), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test.repo-abc"):
+
+            agent._cleanup_eval_image("test__repo-abc123", "test/repo")
+
+        mock_client.images.remove.assert_called_once_with(
+            "testuser/sweap-images:test.repo-abc", force=True
+        )
+
+    def test_cleanup_handles_missing_image(self, agent):
+        """_cleanup_eval_image should not raise if image doesn't exist."""
+        mock_docker = self._mock_docker()
+        mock_docker.from_env.return_value.images.remove.side_effect = Exception("No such image")
+
+        with patch.dict("sys.modules", {"docker": mock_docker}), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"):
+            # Should not raise
+            agent._cleanup_eval_image("test__repo-abc123", "test/repo")
+
+    def test_cleanup_handles_no_docker(self, agent):
+        """_cleanup_eval_image should not raise if Docker is unavailable."""
+        mock_docker = self._mock_docker()
+        mock_docker.from_env.side_effect = Exception("Cannot connect to Docker")
+
+        with patch.dict("sys.modules", {"docker": mock_docker}), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"):
+            # Should not raise
+            agent._cleanup_eval_image("test__repo-abc123", "test/repo")

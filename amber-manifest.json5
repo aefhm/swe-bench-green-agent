@@ -4,7 +4,18 @@
 
   config_schema: {
     type: "object",
-    properties: {},
+    properties: {
+      instance_ids: {
+        type: "string",
+        description: "Comma-separated instance IDs for this batch (empty = all)",
+        default: "",
+      },
+      max_instances: {
+        type: "string",
+        description: "Max instances to evaluate (0 = all)",
+        default: "0",
+      },
+    },
     required: [],
     additionalProperties: false,
   },
@@ -15,6 +26,8 @@
 
     env: {
       CODING_AGENT_URL: "${slots.coding_agent.url}",
+      INSTANCE_IDS: "${config.instance_ids}",
+      MAX_INSTANCES: "${config.max_instances}",
     },
 
     mounts: [
@@ -34,9 +47,13 @@
 
   provides: {
     a2a: { kind: "a2a", endpoint: "a2a_endpoint" },
+    results: { kind: "http", endpoint: "a2a_endpoint", path: "/results" },
   },
 
-  exports: { a2a: "a2a" },
+  exports: {
+    a2a: "a2a",
+    results: "results",
+  },
 
   metadata: {
     assessment_config: {
