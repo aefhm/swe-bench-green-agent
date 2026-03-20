@@ -4,13 +4,7 @@
 
   config_schema: {
     type: "object",
-    properties: {
-      dockerhub_username: {
-        type: "string",
-        description: "Docker Hub username where sweap-images are hosted",
-        default: "jefzda",
-      },
-    },
+    properties: {},
     required: [],
     additionalProperties: false,
   },
@@ -20,7 +14,6 @@
     entrypoint: "uv run python src/server.py --host 0.0.0.0 --port 9009",
 
     env: {
-      DOCKERHUB_USERNAME: "${config.dockerhub_username}",
       CODING_AGENT_URL: "${slots.coding_agent.url}",
     },
 
