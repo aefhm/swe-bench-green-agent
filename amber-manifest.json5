@@ -47,7 +47,9 @@
 
   metadata: {
     assessment_config: {
-      max_instances: 1,
+      max_instances: 0,
+      batch_size: 37,
+      instance_ids: [],  // empty = use data/instances.jsonl; populate to restrict to specific IDs
     },
     participant_roles: ["coding_agent"],
   },
