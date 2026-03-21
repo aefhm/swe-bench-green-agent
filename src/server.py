@@ -174,9 +174,12 @@ def main():
     )
     app = a2a_app.build()
 
-    # ── Mount /results endpoint ──
+    # ── Mount results endpoint ──
+    # Served at both "/" and "/results" so the amber proxy export works with
+    # quick-submit-runner (polls "/") and direct access (polls "/results").
     app.routes.insert(0, Route("/results", results_handler, methods=["GET"]))
     app.routes.insert(0, Route("/results/", results_handler, methods=["GET"]))
+    app.routes.insert(0, Route("/", results_handler, methods=["GET"]))
 
     # ── Register auto-start as a startup event ──
     if auto_start:
