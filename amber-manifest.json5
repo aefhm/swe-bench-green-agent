@@ -47,7 +47,7 @@
 
   provides: {
     a2a: { kind: "a2a", endpoint: "a2a_endpoint" },
-    results: { kind: "http", endpoint: "a2a_endpoint", path: "/results" },
+    results: { kind: "http", endpoint: "a2a_endpoint" },
   },
 
   exports: {
