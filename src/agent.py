@@ -247,9 +247,12 @@ class Agent:
             await updater.reject(new_agent_text_message(f"Invalid request: {e}"))
             return
 
+        # Prefer the slot URL (CODING_AGENT_URL via Amber mesh) over any URL
+        # the gateway sends in participants — the gateway proxy doesn't forward
+        # A2A discovery requests, so the direct mesh route is required.
         participant_url = str(
-            request.participants.get("coding_agent")
-            or self.coding_agent_url
+            self.coding_agent_url
+            or request.participants.get("coding_agent")
             or ""
         )
         if not participant_url:
