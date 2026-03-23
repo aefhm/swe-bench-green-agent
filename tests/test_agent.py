@@ -81,10 +81,6 @@ class TestSelectInstances:
         result = agent._select_instances({"instance_ids": ["test__repo-def456"]})
         assert len(result) == 1
 
-    def test_max_instances(self, agent):
-        result = agent._select_instances({"max_instances": 2})
-        assert len(result) == 2
-
     def test_no_match(self, agent):
         result = agent._select_instances({"instances": ["nonexistent"]})
         assert len(result) == 0

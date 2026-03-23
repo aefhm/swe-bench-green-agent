@@ -55,7 +55,6 @@ async def auto_start_eval(
     agent: Agent,
     coding_agent_url: str,
     instance_ids: list[str],
-    max_instances: int,
 ):
     """Background task: run evaluation from env config and publish to eval_state.
 
@@ -65,15 +64,13 @@ async def auto_start_eval(
     eval_state["status"] = "running"
     logger.info(
         f"Auto-start evaluation: {len(instance_ids) if instance_ids else 'all'} instances, "
-        f"max_instances={max_instances}, coding_agent={coding_agent_url}"
+        f"coding_agent={coding_agent_url}"
     )
 
     try:
         config: dict[str, Any] = {}
         if instance_ids:
             config["instances"] = instance_ids
-        if max_instances > 0:
-            config["max_instances"] = max_instances
 
         async def on_progress(msg: str):
             logger.info(f"[eval] {msg}")
@@ -120,7 +117,6 @@ def main():
     # ── Read auto-start config from env (set by Amber via AMBER_CONFIG_GREEN__*) ──
     coding_agent_url = os.environ.get("CODING_AGENT_URL")
     instance_ids_raw = os.environ.get("INSTANCE_IDS", "")
-    max_instances = int(os.environ.get("MAX_INSTANCES", "0"))
     auto_start = bool(instance_ids_raw.strip())
 
     if auto_start:
@@ -195,7 +191,7 @@ def main():
             # Small delay to let the coding agent container start
             await asyncio.sleep(5)
             asyncio.create_task(
-                auto_start_eval(agent, coding_agent_url, instance_ids, max_instances)
+                auto_start_eval(agent, coding_agent_url, instance_ids)
             )
 
     uvicorn.run(app, host=args.host, port=args.port)

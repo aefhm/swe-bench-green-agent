@@ -43,7 +43,7 @@ class EvalRequest(BaseModel):
 
 class Agent:
     required_roles: list[str] = ["coding_agent"]
-    required_config_keys: list[str] = []  # optional: instance_ids, max_instances
+    required_config_keys: list[str] = []  # optional: instance_ids
 
     def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda",
                  coding_agent_url: str | None = None):
@@ -90,9 +90,7 @@ class Agent:
                 if i.get("short_id") in target or i["instance_id"] in target
             ]
 
-        # Limit count if specified
-        max_instances = config.get("max_instances", len(instances))
-        return instances[:max_instances]
+        return instances
 
     async def run_batch(
         self,
@@ -106,7 +104,7 @@ class Agent:
         and the auto-start /results path.
 
         Args:
-            config: Instance selection config (instances, instance_ids, max_instances)
+            config: Instance selection config (instances, instance_ids)
             participant_url: URL of the coding agent to evaluate
             on_progress: Optional async callback for status updates
 

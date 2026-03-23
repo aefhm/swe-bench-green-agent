@@ -106,7 +106,6 @@ class TestAutoStartEval:
                 agent=agent,
                 coding_agent_url="http://fake-agent:9009",
                 instance_ids=["test-001"],
-                max_instances=0,
             )
 
         assert eval_state["status"] == "completed"
@@ -123,7 +122,6 @@ class TestAutoStartEval:
             agent=agent,
             coding_agent_url="http://fake-agent:9009",
             instance_ids=["nonexistent"],
-            max_instances=0,
         )
 
         assert eval_state["status"] == "failed"
@@ -167,7 +165,6 @@ class TestAutoStartEval:
                     agent=agent,
                     coding_agent_url="http://fake-agent:9009",
                     instance_ids=["test-001"],
-                    max_instances=0,
                 )
 
         assert observed_status == "running"
