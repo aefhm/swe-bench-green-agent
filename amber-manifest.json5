@@ -64,7 +64,6 @@
   metadata: {
     assessment_config: {
       max_runners: 20,
-      instance_ids: [],  // empty = use data/instances.jsonl; populate to restrict to specific IDs
     },
     participant_roles: ["coding_agent"],
   },
