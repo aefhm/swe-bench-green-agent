@@ -64,7 +64,7 @@
   metadata: {
     assessment_config: {
       max_runners: 20,
-      instance_ids: "",
+      instance_ids: [],
     },
     participant_roles: ["coding_agent"],
   },
