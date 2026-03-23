@@ -7,8 +7,18 @@
     properties: {
       instance_ids: {
         type: "string",
-        description: "Comma-separated instance IDs for this batch (empty = all)",
+        description: "Comma-separated instance IDs (optional override; empty = use batch slicing)",
         default: "",
+      },
+      batch_index: {
+        type: "string",
+        description: "0-based batch index for this runner",
+        default: "0",
+      },
+      total_batches: {
+        type: "string",
+        description: "Total number of batches across all runners",
+        default: "1",
       },
     },
     required: [],
@@ -22,6 +32,8 @@
     env: {
       CODING_AGENT_URL: "${slots.coding_agent.url}",
       INSTANCE_IDS: "${config.instance_ids}",
+      BATCH_INDEX: "${config.batch_index}",
+      TOTAL_BATCHES: "${config.total_batches}",
     },
 
     mounts: [

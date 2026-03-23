@@ -76,19 +76,33 @@ class Agent:
     def _select_instances(self, config: dict[str, Any]) -> list[dict]:
         """Select which instances to evaluate based on config.
 
-        The 'instances' config key accepts a list of short_id or full instance_id values.
-        Falls back to 'instance_ids' (full IDs only) for backwards compatibility.
+        Priority:
+        1. Explicit instance IDs (via 'instances' or 'instance_ids' keys)
+        2. Batch slicing (via 'batch_index' and 'total_batches')
+        3. All instances (no filtering)
         """
         instances = self.instances
 
-        # Filter by instances (short_id or instance_id) or legacy instance_ids
+        # Filter by explicit instance IDs if provided
         filter_ids = config.get("instances") or config.get("instance_ids")
         if filter_ids:
             target = set(filter_ids)
-            instances = [
+            return [
                 i for i in instances
                 if i.get("short_id") in target or i["instance_id"] in target
             ]
+
+        # Slice by batch index if provided
+        batch_index = config.get("batch_index")
+        total_batches = config.get("total_batches")
+        if batch_index is not None and total_batches is not None:
+            batch_index = int(batch_index)
+            total_batches = int(total_batches)
+            if total_batches > 0:
+                import math
+                chunk_size = math.ceil(len(instances) / total_batches)
+                start = batch_index * chunk_size
+                return instances[start:start + chunk_size]
 
         return instances
 

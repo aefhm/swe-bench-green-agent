@@ -55,22 +55,27 @@ async def auto_start_eval(
     agent: Agent,
     coding_agent_url: str,
     instance_ids: list[str],
+    batch_index: str | None = None,
+    total_batches: str | None = None,
 ):
     """Background task: run evaluation from env config and publish to eval_state.
 
-    Triggered on startup when INSTANCE_IDS env var is set. The /results
-    endpoint serves the state so the CI runner can poll it.
+    Triggered on startup when INSTANCE_IDS or BATCH_INDEX/TOTAL_BATCHES env vars
+    are set. The /results endpoint serves the state so the CI runner can poll it.
     """
     eval_state["status"] = "running"
     logger.info(
-        f"Auto-start evaluation: {len(instance_ids) if instance_ids else 'all'} instances, "
-        f"coding_agent={coding_agent_url}"
+        f"Auto-start evaluation: instance_ids={len(instance_ids) if instance_ids else 'none'}, "
+        f"batch={batch_index}/{total_batches}, coding_agent={coding_agent_url}"
     )
 
     try:
         config: dict[str, Any] = {}
         if instance_ids:
             config["instances"] = instance_ids
+        if batch_index is not None and total_batches is not None:
+            config["batch_index"] = batch_index
+            config["total_batches"] = total_batches
 
         async def on_progress(msg: str):
             logger.info(f"[eval] {msg}")
@@ -117,12 +122,14 @@ def main():
     # ── Read auto-start config from env (set by Amber via AMBER_CONFIG_GREEN__*) ──
     coding_agent_url = os.environ.get("CODING_AGENT_URL")
     instance_ids_raw = os.environ.get("INSTANCE_IDS", "")
-    auto_start = bool(instance_ids_raw.strip())
+    batch_index = os.environ.get("BATCH_INDEX")
+    total_batches = os.environ.get("TOTAL_BATCHES")
+    auto_start = bool(instance_ids_raw.strip()) or (batch_index is not None and total_batches is not None)
 
     if auto_start:
-        logger.info(f"Auto-start mode: INSTANCE_IDS={instance_ids_raw[:80]}...")
+        logger.info(f"Auto-start mode: INSTANCE_IDS={instance_ids_raw[:80] if instance_ids_raw.strip() else 'none'}, BATCH={batch_index}/{total_batches}")
     else:
-        logger.info("A2A-only mode: no INSTANCE_IDS set, waiting for A2A messages")
+        logger.info("A2A-only mode: no INSTANCE_IDS or BATCH_INDEX set, waiting for A2A messages")
 
     # ── Build A2A server ──
     skill = AgentSkill(
@@ -191,7 +198,7 @@ def main():
             # Small delay to let the coding agent container start
             await asyncio.sleep(5)
             asyncio.create_task(
-                auto_start_eval(agent, coding_agent_url, instance_ids)
+                auto_start_eval(agent, coding_agent_url, instance_ids, batch_index, total_batches)
             )
 
     uvicorn.run(app, host=args.host, port=args.port)

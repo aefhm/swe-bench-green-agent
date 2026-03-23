@@ -128,6 +128,45 @@ class TestAutoStartEval:
         assert eval_state["error"] is not None
 
     @pytest.mark.asyncio
+    async def test_batch_index_slicing(self, agent):
+        """auto_start_eval with batch_index/total_batches should pass config to run_batch."""
+        from server import auto_start_eval, eval_state
+
+        mock_eval_result = EvalResult(
+            instance_id="test__repo-abc123",
+            passed=True,
+            fail_to_pass_ok=True,
+            pass_to_pass_ok=True,
+        )
+
+        captured_config = {}
+
+        async def capture_run_batch(config, participant_url, on_progress=None):
+            captured_config.update(config)
+            return await original_run_batch(config, participant_url, on_progress=on_progress)
+
+        with patch.object(agent.messenger, "talk_to_agent", new_callable=AsyncMock) as mock_talk, \
+             patch("agent.evaluate_patch", return_value=mock_eval_result), \
+             patch("agent.get_dockerhub_image_uri", return_value="testuser/sweap-images:test"), \
+             patch.object(agent, "_cleanup_eval_image"):
+
+            mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
+            original_run_batch = agent.run_batch
+
+            with patch.object(agent, "run_batch", side_effect=capture_run_batch):
+                await auto_start_eval(
+                    agent=agent,
+                    coding_agent_url="http://fake-agent:9009",
+                    instance_ids=[],
+                    batch_index="0",
+                    total_batches="1",
+                )
+
+        assert eval_state["status"] == "completed"
+        assert captured_config["batch_index"] == "0"
+        assert captured_config["total_batches"] == "1"
+
+    @pytest.mark.asyncio
     async def test_sets_running_during_eval(self, agent):
         """eval_state should be 'running' while evaluation is in progress."""
         from server import auto_start_eval, eval_state

@@ -85,6 +85,43 @@ class TestSelectInstances:
         result = agent._select_instances({"instances": ["nonexistent"]})
         assert len(result) == 0
 
+    def test_batch_slicing_first(self, agent):
+        """batch_index=0, total_batches=2 should return the first half."""
+        result = agent._select_instances({"batch_index": "0", "total_batches": "2"})
+        assert len(result) == 2
+        assert result[0]["short_id"] == "test-001"
+        assert result[1]["short_id"] == "test-002"
+
+    def test_batch_slicing_second(self, agent):
+        """batch_index=1, total_batches=2 should return the second half."""
+        result = agent._select_instances({"batch_index": "1", "total_batches": "2"})
+        assert len(result) == 1
+        assert result[0]["short_id"] == "test-003"
+
+    def test_batch_slicing_single_batch(self, agent):
+        """batch_index=0, total_batches=1 should return all instances."""
+        result = agent._select_instances({"batch_index": "0", "total_batches": "1"})
+        assert len(result) == 3
+
+    def test_batch_slicing_more_batches_than_instances(self, agent):
+        """Extra batches beyond instance count should return empty."""
+        result = agent._select_instances({"batch_index": "0", "total_batches": "5"})
+        assert len(result) == 1
+        assert result[0]["short_id"] == "test-001"
+        # Batch index beyond last instance
+        result = agent._select_instances({"batch_index": "4", "total_batches": "5"})
+        assert len(result) == 0
+
+    def test_explicit_ids_override_batch_slicing(self, agent):
+        """Explicit instance IDs should take priority over batch slicing."""
+        result = agent._select_instances({
+            "instances": ["test-002"],
+            "batch_index": "0",
+            "total_batches": "2",
+        })
+        assert len(result) == 1
+        assert result[0]["short_id"] == "test-002"
+
 
 # ── run_batch ─────────────────────────────────────────────────────
 
