@@ -112,15 +112,33 @@ class TestSelectInstances:
         result = agent._select_instances({"batch_index": "4", "total_batches": "5"})
         assert len(result) == 0
 
-    def test_explicit_ids_override_batch_slicing(self, agent):
-        """Explicit instance IDs should take priority over batch slicing."""
+    def test_ids_then_batch_slicing(self, agent):
+        """Explicit IDs filter first, then batch slicing applies to the filtered set."""
+        # 2 IDs with 2 batches → each batch gets 1
         result = agent._select_instances({
-            "instances": ["test-002"],
+            "instances": ["test-001", "test-003"],
             "batch_index": "0",
             "total_batches": "2",
         })
         assert len(result) == 1
-        assert result[0]["short_id"] == "test-002"
+        assert result[0]["short_id"] == "test-001"
+
+        result = agent._select_instances({
+            "instances": ["test-001", "test-003"],
+            "batch_index": "1",
+            "total_batches": "2",
+        })
+        assert len(result) == 1
+        assert result[0]["short_id"] == "test-003"
+
+    def test_ids_with_single_batch(self, agent):
+        """Explicit IDs with total_batches=1 returns all matching IDs."""
+        result = agent._select_instances({
+            "instances": ["test-001", "test-003"],
+            "batch_index": "0",
+            "total_batches": "1",
+        })
+        assert len(result) == 2
 
 
 # ── run_batch ─────────────────────────────────────────────────────

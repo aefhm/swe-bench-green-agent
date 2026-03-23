@@ -87,22 +87,22 @@ class Agent:
         filter_ids = config.get("instances") or config.get("instance_ids")
         if filter_ids:
             target = set(filter_ids)
-            return [
+            instances = [
                 i for i in instances
                 if i.get("short_id") in target or i["instance_id"] in target
             ]
 
-        # Slice by batch index if provided
+        # Slice by batch index if provided (applied after ID filtering)
         batch_index = config.get("batch_index")
         total_batches = config.get("total_batches")
         if batch_index is not None and total_batches is not None:
             batch_index = int(batch_index)
             total_batches = int(total_batches)
-            if total_batches > 0:
+            if total_batches > 1:
                 import math
                 chunk_size = math.ceil(len(instances) / total_batches)
                 start = batch_index * chunk_size
-                return instances[start:start + chunk_size]
+                instances = instances[start:start + chunk_size]
 
         return instances
 
