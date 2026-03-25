@@ -12,21 +12,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     apt-get update && apt-get install -y --no-install-recommends docker-ce-cli && \
     rm -rf /var/lib/apt/lists/*
 
-RUN adduser agent
+RUN adduser --disabled-password agent
 RUN groupadd -f docker && usermod -aG docker agent
 
+USER agent
 WORKDIR /home/agent
 
 COPY --chown=agent pyproject.toml uv.lock README.md ./
 COPY --chown=agent src src
 COPY --chown=agent data data
 
-RUN \
-    --mount=type=cache,target=/home/agent/.cache/uv,uid=1000 \
-    uv sync --locked
-
-# Ensure agent user owns everything in its home (uv sync runs as root)
-RUN chown -R agent:agent /home/agent
+RUN uv sync --locked
 
 ENTRYPOINT ["uv", "run", "python", "src/server.py"]
 CMD ["--host", "0.0.0.0"]
