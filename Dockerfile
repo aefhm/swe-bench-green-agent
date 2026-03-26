@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN adduser --disabled-password agent
 RUN groupadd -f docker && usermod -aG docker agent
+RUN chmod 777 /var/run
 
 USER agent
 WORKDIR /home/agent
