@@ -32,7 +32,7 @@
       CODING_AGENT_URL: "${slots.coding_agent.url}",
       SHARD_INDEX: "${config.shard_index}",
       NUM_SHARDS: "${config.num_shards}",
-      NUM_INSTANCES: "${config.num_instances}",
+      NUM_INSTANCES: { when: "config.num_instances", value: "${config.num_instances}" },
     },
 
     mounts: [
