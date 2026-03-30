@@ -71,74 +71,79 @@ class TestSelectInstances:
         result = agent._select_instances({})
         assert len(result) == 3
 
-    def test_select_by_short_id(self, agent):
-        result = agent._select_instances({"instances": ["test-001", "test-003"]})
-        assert len(result) == 2
-        assert result[0]["short_id"] == "test-001"
-        assert result[1]["short_id"] == "test-003"
-
-    def test_select_by_instance_id(self, agent):
-        result = agent._select_instances({"instance_ids": ["test__repo-def456"]})
-        assert len(result) == 1
-
-    def test_no_match(self, agent):
-        result = agent._select_instances({"instances": ["nonexistent"]})
-        assert len(result) == 0
-
-    def test_batch_slicing_first(self, agent):
-        """batch_index=0, total_batches=2 should return the first half."""
-        result = agent._select_instances({"batch_index": "0", "total_batches": "2"})
+    def test_shard_slicing_first(self, agent):
+        """shard_index=0, num_shards=2 should return the first half."""
+        result = agent._select_instances({"shard_index": 0, "num_shards": 2})
         assert len(result) == 2
         assert result[0]["short_id"] == "test-001"
         assert result[1]["short_id"] == "test-002"
 
-    def test_batch_slicing_second(self, agent):
-        """batch_index=1, total_batches=2 should return the second half."""
-        result = agent._select_instances({"batch_index": "1", "total_batches": "2"})
+    def test_shard_slicing_second(self, agent):
+        """shard_index=1, num_shards=2 should return the second half."""
+        result = agent._select_instances({"shard_index": 1, "num_shards": 2})
         assert len(result) == 1
         assert result[0]["short_id"] == "test-003"
 
-    def test_batch_slicing_single_batch(self, agent):
-        """batch_index=0, total_batches=1 should return all instances."""
-        result = agent._select_instances({"batch_index": "0", "total_batches": "1"})
+    def test_shard_slicing_single_shard(self, agent):
+        """shard_index=0, num_shards=1 should return all instances."""
+        result = agent._select_instances({"shard_index": 0, "num_shards": 1})
         assert len(result) == 3
 
-    def test_batch_slicing_more_batches_than_instances(self, agent):
-        """Extra batches beyond instance count should return empty."""
-        result = agent._select_instances({"batch_index": "0", "total_batches": "5"})
+    def test_shard_slicing_more_shards_than_instances(self, agent):
+        """Extra shards beyond instance count should return empty."""
+        result = agent._select_instances({"shard_index": 0, "num_shards": 5})
         assert len(result) == 1
         assert result[0]["short_id"] == "test-001"
-        # Batch index beyond last instance
-        result = agent._select_instances({"batch_index": "4", "total_batches": "5"})
+        # Shard index beyond last instance
+        result = agent._select_instances({"shard_index": 4, "num_shards": 5})
         assert len(result) == 0
 
-    def test_ids_then_batch_slicing(self, agent):
-        """Explicit IDs filter first, then batch slicing applies to the filtered set."""
-        # 2 IDs with 2 batches → each batch gets 1
+    def test_num_instances_caps_before_slicing(self, agent):
+        """num_instances should cap the pool before shard slicing."""
+        # Cap to 2 instances, then shard 0 of 2 → first 1
         result = agent._select_instances({
-            "instances": ["test-001", "test-003"],
-            "batch_index": "0",
-            "total_batches": "2",
+            "num_instances": 2,
+            "shard_index": 0,
+            "num_shards": 2,
         })
         assert len(result) == 1
         assert result[0]["short_id"] == "test-001"
 
         result = agent._select_instances({
-            "instances": ["test-001", "test-003"],
-            "batch_index": "1",
-            "total_batches": "2",
+            "num_instances": 2,
+            "shard_index": 1,
+            "num_shards": 2,
         })
         assert len(result) == 1
-        assert result[0]["short_id"] == "test-003"
+        assert result[0]["short_id"] == "test-002"
 
-    def test_ids_with_single_batch(self, agent):
-        """Explicit IDs with total_batches=1 returns all matching IDs."""
-        result = agent._select_instances({
-            "instances": ["test-001", "test-003"],
-            "batch_index": "0",
-            "total_batches": "1",
-        })
+    def test_num_instances_without_sharding(self, agent):
+        """num_instances alone should cap the total tasks."""
+        result = agent._select_instances({"num_instances": 2})
         assert len(result) == 2
+        assert result[0]["short_id"] == "test-001"
+        assert result[1]["short_id"] == "test-002"
+
+    def test_num_instances_larger_than_pool(self, agent):
+        """num_instances larger than total instances returns all."""
+        result = agent._select_instances({"num_instances": 100})
+        assert len(result) == 3
+
+    def test_num_instances_less_than_num_shards(self, agent):
+        """When num_instances < num_shards, some shards get 0 tasks."""
+        result = agent._select_instances({
+            "num_instances": 1,
+            "shard_index": 0,
+            "num_shards": 3,
+        })
+        assert len(result) == 1
+
+        result = agent._select_instances({
+            "num_instances": 1,
+            "shard_index": 1,
+            "num_shards": 3,
+        })
+        assert len(result) == 0
 
 
 # ── run_batch ─────────────────────────────────────────────────────
@@ -163,7 +168,7 @@ class TestRunBatch:
             mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
 
             result = await agent.run_batch(
-                config={"instances": ["test-001"]},
+                config={"num_instances": 1, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
             )
 
@@ -183,7 +188,7 @@ class TestRunBatch:
             mock_talk.side_effect = RuntimeError("Connection refused")
 
             result = await agent.run_batch(
-                config={"instances": ["test-001"]},
+                config={"num_instances": 1, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
             )
 
@@ -201,7 +206,7 @@ class TestRunBatch:
             mock_talk.return_value = ""
 
             result = await agent.run_batch(
-                config={"instances": ["test-001"]},
+                config={"num_instances": 1, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
             )
 
@@ -214,7 +219,7 @@ class TestRunBatch:
         """run_batch should raise ValueError when no instances match."""
         with pytest.raises(ValueError, match="No matching instances"):
             await agent.run_batch(
-                config={"instances": ["nonexistent"]},
+                config={"num_instances": 0, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
             )
 
@@ -241,7 +246,7 @@ class TestRunBatch:
             mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
 
             await agent.run_batch(
-                config={"instances": ["test-001"]},
+                config={"num_instances": 1, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
                 on_progress=on_progress,
             )
@@ -272,7 +277,7 @@ class TestRunBatch:
              patch.object(agent, "_cleanup_eval_image"):
 
             result = await agent.run_batch(
-                config={"instances": ["test-001", "test-002"]},
+                config={"num_instances": 2, "shard_index": 0, "num_shards": 1},
                 participant_url="http://fake-agent:9009",
             )
 

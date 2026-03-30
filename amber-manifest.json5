@@ -5,20 +5,19 @@
   config_schema: {
     type: "object",
     properties: {
-      instance_ids: {
-        type: "string",
-        description: "Comma-separated instance IDs (optional override; empty = use batch slicing)",
-        default: "",
+      shard_index: {
+        type: "integer",
+        description: "0-based index of this shard",
+        default: 0,
       },
-      batch_index: {
-        type: "string",
-        description: "0-based batch index for this runner",
-        default: "0",
+      num_shards: {
+        type: "integer",
+        description: "Total number of parallel shards",
+        default: 1,
       },
-      total_batches: {
-        type: "string",
-        description: "Total number of batches across all runners",
-        default: "1",
+      num_instances: {
+        type: "integer",
+        description: "Optional — total tasks to run across all shards. If absent, run all.",
       },
     },
     required: [],
@@ -31,9 +30,9 @@
 
     env: {
       CODING_AGENT_URL: "${slots.coding_agent.url}",
-      INSTANCE_IDS: "${config.instance_ids}",
-      BATCH_INDEX: "${config.batch_index}",
-      TOTAL_BATCHES: "${config.total_batches}",
+      SHARD_INDEX: "${config.shard_index}",
+      NUM_SHARDS: "${config.num_shards}",
+      NUM_INSTANCES: "${config.num_instances}",
     },
 
     mounts: [

@@ -1,4 +1,4 @@
-"""Unit tests for server.py — parse_instance_ids, auto_start_eval state machine, results_handler.
+"""Unit tests for server.py — auto_start_eval state machine, results_handler.
 
 These tests mock the agent so they can run without Docker, a coding agent,
 or any network access.
@@ -47,28 +47,6 @@ def agent(data_dir):
     )
 
 
-# ── parse_instance_ids ────────────────────────────────────────────
-
-
-class TestParseInstanceIds:
-    def test_empty(self):
-        from server import parse_instance_ids
-        assert parse_instance_ids("") == []
-        assert parse_instance_ids("  ") == []
-
-    def test_single(self):
-        from server import parse_instance_ids
-        assert parse_instance_ids("test-001") == ["test-001"]
-
-    def test_multiple(self):
-        from server import parse_instance_ids
-        assert parse_instance_ids("test-001,test-002,test-003") == ["test-001", "test-002", "test-003"]
-
-    def test_whitespace(self):
-        from server import parse_instance_ids
-        assert parse_instance_ids("  test-001 , test-002 ") == ["test-001", "test-002"]
-
-
 # ── auto_start_eval state machine ────────────────────────────────
 
 
@@ -105,7 +83,9 @@ class TestAutoStartEval:
             await auto_start_eval(
                 agent=agent,
                 coding_agent_url="http://fake-agent:9009",
-                instance_ids=["test-001"],
+                shard_index=0,
+                num_shards=1,
+                num_instances=1,
             )
 
         assert eval_state["status"] == "completed"
@@ -117,19 +97,21 @@ class TestAutoStartEval:
         """auto_start_eval should set failed status on error."""
         from server import auto_start_eval, eval_state
 
-        # Provide nonexistent instance IDs so _select_instances returns empty → ValueError
+        # num_instances=0 → empty instance list → ValueError
         await auto_start_eval(
             agent=agent,
             coding_agent_url="http://fake-agent:9009",
-            instance_ids=["nonexistent"],
+            shard_index=0,
+            num_shards=1,
+            num_instances=0,
         )
 
         assert eval_state["status"] == "failed"
         assert eval_state["error"] is not None
 
     @pytest.mark.asyncio
-    async def test_batch_index_slicing(self, agent):
-        """auto_start_eval with batch_index/total_batches should pass config to run_batch."""
+    async def test_shard_config_passed_to_run_batch(self, agent):
+        """auto_start_eval should pass shard config to run_batch."""
         from server import auto_start_eval, eval_state
 
         mock_eval_result = EvalResult(
@@ -157,14 +139,58 @@ class TestAutoStartEval:
                 await auto_start_eval(
                     agent=agent,
                     coding_agent_url="http://fake-agent:9009",
-                    instance_ids=[],
-                    batch_index="0",
-                    total_batches="1",
+                    shard_index=0,
+                    num_shards=1,
                 )
 
         assert eval_state["status"] == "completed"
-        assert captured_config["batch_index"] == "0"
-        assert captured_config["total_batches"] == "1"
+        assert captured_config["shard_index"] == 0
+        assert captured_config["num_shards"] == 1
+
+    @pytest.mark.asyncio
+    async def test_num_instances_passed_when_set(self, agent):
+        """auto_start_eval should include num_instances in config when provided."""
+        from server import auto_start_eval, eval_state
+
+        captured_config = {}
+
+        async def capture_run_batch(config, participant_url, on_progress=None):
+            captured_config.update(config)
+            return {"status": "completed", "accuracy": 1.0, "passed": 1, "total": 1, "results": []}
+
+        with patch.object(agent, "run_batch", side_effect=capture_run_batch):
+            await auto_start_eval(
+                agent=agent,
+                coding_agent_url="http://fake-agent:9009",
+                shard_index=0,
+                num_shards=4,
+                num_instances=10,
+            )
+
+        assert captured_config["num_instances"] == 10
+        assert captured_config["shard_index"] == 0
+        assert captured_config["num_shards"] == 4
+
+    @pytest.mark.asyncio
+    async def test_num_instances_omitted_when_none(self, agent):
+        """auto_start_eval should not include num_instances when None."""
+        from server import auto_start_eval, eval_state
+
+        captured_config = {}
+
+        async def capture_run_batch(config, participant_url, on_progress=None):
+            captured_config.update(config)
+            return {"status": "completed", "accuracy": 1.0, "passed": 1, "total": 1, "results": []}
+
+        with patch.object(agent, "run_batch", side_effect=capture_run_batch):
+            await auto_start_eval(
+                agent=agent,
+                coding_agent_url="http://fake-agent:9009",
+                shard_index=0,
+                num_shards=1,
+            )
+
+        assert "num_instances" not in captured_config
 
     @pytest.mark.asyncio
     async def test_sets_running_during_eval(self, agent):
@@ -172,10 +198,6 @@ class TestAutoStartEval:
         from server import auto_start_eval, eval_state
 
         observed_status = None
-
-        async def capture_status(msg):
-            nonlocal observed_status
-            observed_status = eval_state["status"]
 
         mock_eval_result = EvalResult(
             instance_id="test__repo-abc123",
@@ -191,7 +213,6 @@ class TestAutoStartEval:
 
             mock_talk.return_value = '{"patch": "diff --git a/foo b/foo"}'
 
-            # Monkey-patch run_batch to observe state mid-flight
             original_run_batch = agent.run_batch
 
             async def instrumented_run_batch(*args, **kwargs):
@@ -203,7 +224,9 @@ class TestAutoStartEval:
                 await auto_start_eval(
                     agent=agent,
                     coding_agent_url="http://fake-agent:9009",
-                    instance_ids=["test-001"],
+                    shard_index=0,
+                    num_shards=1,
+                    num_instances=1,
                 )
 
         assert observed_status == "running"

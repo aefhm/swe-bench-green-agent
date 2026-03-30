@@ -54,28 +54,28 @@ async def results_handler(request: Request) -> JSONResponse:
 async def auto_start_eval(
     agent: Agent,
     coding_agent_url: str,
-    instance_ids: list[str],
-    batch_index: str | None = None,
-    total_batches: str | None = None,
+    shard_index: int = 0,
+    num_shards: int = 1,
+    num_instances: int | None = None,
 ):
     """Background task: run evaluation from env config and publish to eval_state.
 
-    Triggered on startup when INSTANCE_IDS or BATCH_INDEX/TOTAL_BATCHES env vars
-    are set. The /results endpoint serves the state so the CI runner can poll it.
+    Triggered on startup when SHARD_INDEX/NUM_SHARDS env vars are set.
+    The /results endpoint serves the state so the CI runner can poll it.
     """
     eval_state["status"] = "running"
     logger.info(
-        f"Auto-start evaluation: instance_ids={len(instance_ids) if instance_ids else 'none'}, "
-        f"batch={batch_index}/{total_batches}, coding_agent={coding_agent_url}"
+        f"Auto-start evaluation: shard={shard_index}/{num_shards}, "
+        f"num_instances={num_instances}, coding_agent={coding_agent_url}"
     )
 
     try:
-        config: dict[str, Any] = {}
-        if instance_ids:
-            config["instances"] = instance_ids
-        if batch_index is not None and total_batches is not None:
-            config["batch_index"] = batch_index
-            config["total_batches"] = total_batches
+        config: dict[str, Any] = {
+            "shard_index": shard_index,
+            "num_shards": num_shards,
+        }
+        if num_instances is not None:
+            config["num_instances"] = num_instances
 
         async def on_progress(msg: str):
             logger.info(f"[eval] {msg}")
@@ -91,13 +91,6 @@ async def auto_start_eval(
         logger.exception("Auto-start evaluation failed")
         eval_state["error"] = str(e)
         eval_state["status"] = "failed"
-
-
-def parse_instance_ids(raw: str) -> list[str]:
-    """Parse comma-separated instance IDs from env var."""
-    if not raw or not raw.strip():
-        return []
-    return [s.strip() for s in raw.split(",") if s.strip()]
 
 
 def main():
@@ -119,17 +112,21 @@ def main():
     )
     args = parser.parse_args()
 
-    # ── Read auto-start config from env (set by Amber via AMBER_CONFIG_GREEN__*) ──
+    # ── Read auto-start config from env (set by Amber via config_schema) ──
     coding_agent_url = os.environ.get("CODING_AGENT_URL")
-    instance_ids_raw = os.environ.get("INSTANCE_IDS", "")
-    batch_index = os.environ.get("BATCH_INDEX")
-    total_batches = os.environ.get("TOTAL_BATCHES")
-    auto_start = bool(instance_ids_raw.strip()) or (batch_index is not None and total_batches is not None)
+    shard_index_raw = os.environ.get("SHARD_INDEX")
+    num_shards_raw = os.environ.get("NUM_SHARDS")
+    num_instances_raw = os.environ.get("NUM_INSTANCES")
+
+    auto_start = shard_index_raw is not None and num_shards_raw is not None
 
     if auto_start:
-        logger.info(f"Auto-start mode: INSTANCE_IDS={instance_ids_raw[:80] if instance_ids_raw.strip() else 'none'}, BATCH={batch_index}/{total_batches}")
+        shard_index = int(shard_index_raw)
+        num_shards = int(num_shards_raw)
+        num_instances = int(num_instances_raw) if num_instances_raw else None
+        logger.info(f"Auto-start mode: shard={shard_index}/{num_shards}, num_instances={num_instances}")
     else:
-        logger.info("A2A-only mode: no INSTANCE_IDS or BATCH_INDEX set, waiting for A2A messages")
+        logger.info("A2A-only mode: no SHARD_INDEX/NUM_SHARDS set, waiting for A2A messages")
 
     # ── Build A2A server ──
     skill = AgentSkill(
@@ -191,14 +188,13 @@ def main():
             dockerhub_username=args.dockerhub_username,
             coding_agent_url=coding_agent_url,
         )
-        instance_ids = parse_instance_ids(instance_ids_raw)
 
         @app.on_event("startup")
         async def _start_eval():
             # Small delay to let the coding agent container start
             await asyncio.sleep(5)
             asyncio.create_task(
-                auto_start_eval(agent, coding_agent_url, instance_ids, batch_index, total_batches)
+                auto_start_eval(agent, coding_agent_url, shard_index, num_shards, num_instances)
             )
 
     uvicorn.run(app, host=args.host, port=args.port)

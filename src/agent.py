@@ -43,7 +43,7 @@ class EvalRequest(BaseModel):
 
 class Agent:
     required_roles: list[str] = ["coding_agent"]
-    required_config_keys: list[str] = []  # optional: instance_ids
+    required_config_keys: list[str] = []
 
     def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda",
                  coding_agent_url: str | None = None):
@@ -76,32 +76,29 @@ class Agent:
     def _select_instances(self, config: dict[str, Any]) -> list[dict]:
         """Select which instances to evaluate based on config.
 
-        Priority:
-        1. Explicit instance IDs (via 'instances' or 'instance_ids' keys)
-        2. Batch slicing (via 'batch_index' and 'total_batches')
-        3. All instances (no filtering)
+        Steps:
+        1. Start with full instance set
+        2. If num_instances is present, cap to that count (deterministic: first N)
+        3. Slice by shard_index / num_shards
         """
         instances = self.instances
 
-        # Filter by explicit instance IDs if provided
-        filter_ids = config.get("instances") or config.get("instance_ids")
-        if filter_ids:
-            target = set(filter_ids)
-            instances = [
-                i for i in instances
-                if i.get("short_id") in target or i["instance_id"] in target
-            ]
+        # Cap total instances if num_instances is specified
+        num_instances = config.get("num_instances")
+        if num_instances is not None:
+            num_instances = int(num_instances)
+            instances = instances[:num_instances]
 
-        # Slice by batch index if provided (applied after ID filtering)
-        batch_index = config.get("batch_index")
-        total_batches = config.get("total_batches")
-        if batch_index is not None and total_batches is not None:
-            batch_index = int(batch_index)
-            total_batches = int(total_batches)
-            if total_batches > 1:
+        # Slice by shard index
+        shard_index = config.get("shard_index")
+        num_shards = config.get("num_shards")
+        if shard_index is not None and num_shards is not None:
+            shard_index = int(shard_index)
+            num_shards = int(num_shards)
+            if num_shards > 1:
                 import math
-                chunk_size = math.ceil(len(instances) / total_batches)
-                start = batch_index * chunk_size
+                chunk_size = math.ceil(len(instances) / num_shards)
+                start = shard_index * chunk_size
                 instances = instances[start:start + chunk_size]
 
         return instances
@@ -118,7 +115,7 @@ class Agent:
         and the auto-start /results path.
 
         Args:
-            config: Instance selection config (instances, instance_ids)
+            config: Shard config (shard_index, num_shards, num_instances)
             participant_url: URL of the coding agent to evaluate
             on_progress: Optional async callback for status updates
 
