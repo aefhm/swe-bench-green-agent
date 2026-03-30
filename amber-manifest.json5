@@ -6,17 +6,17 @@
     type: "object",
     properties: {
       shard_index: {
-        type: "integer",
+        type: "string",
         description: "0-based index of this shard",
-        default: 0,
+        default: "0",
       },
       num_shards: {
-        type: "integer",
+        type: "string",
         description: "Total number of parallel shards",
-        default: 1,
+        default: "1",
       },
       num_instances: {
-        type: "integer",
+        type: "string",
         description: "Optional — total tasks to run across all shards. If absent, run all.",
       },
     },
