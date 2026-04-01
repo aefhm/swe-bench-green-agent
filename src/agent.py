@@ -126,6 +126,24 @@ class Agent:
         if not instances:
             raise ValueError("No matching instances found for the given config")
 
+        # Fetch the participant's agent card for metadata (name, version, etc.)
+        # This is included in the results so the leaderboard knows which agent/model
+        # produced the submission.
+        participant_info: dict[str, Any] = {}
+        try:
+            import httpx
+            from a2a.client import A2ACardResolver
+            async with httpx.AsyncClient(timeout=10) as client:
+                resolver = A2ACardResolver(httpx_client=client, base_url=participant_url)
+                card = await resolver.get_agent_card()
+                participant_info = {
+                    "name": card.name,
+                    "version": getattr(card, "version", None),
+                    "description": getattr(card, "description", None),
+                }
+        except Exception as e:
+            logger.warning(f"Failed to fetch participant agent card: {e}")
+
         if on_progress:
             await on_progress(f"Starting evaluation of {len(instances)} instance(s)...")
 
@@ -218,6 +236,7 @@ class Agent:
             "accuracy": accuracy,
             "passed": passed,
             "total": total,
+            "participant": participant_info,
             "results": [
                 {
                     "instance_id": r.instance_id,
