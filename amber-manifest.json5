@@ -42,4 +42,7 @@
     results: "results",
   },
 
+  metadata: {
+    participant_roles: ["coding_agent"],
+  },
 }
