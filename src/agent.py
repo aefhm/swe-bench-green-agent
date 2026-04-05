@@ -37,7 +37,7 @@ ProgressCallback = Callable[[str], Awaitable[None]] | None
 class EvalRequest(BaseModel):
     """Request format sent by the AgentBeats platform to this green agent."""
 
-    participants: dict[str, HttpUrl] = {}  # role -> agent URL (optional if CODING_AGENT_URL set)
+    participants: dict[str, HttpUrl]  # role -> agent URL
     config: dict[str, Any] = {}
 
 
@@ -45,11 +45,9 @@ class Agent:
     required_roles: list[str] = ["coding_agent"]
     required_config_keys: list[str] = []
 
-    def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda",
-                 coding_agent_url: str | None = None):
+    def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda"):
         self.messenger = Messenger()
         self.data_dir = data_dir
-        self.coding_agent_url = coding_agent_url
         self.dockerhub_username = dockerhub_username
         self._instances: list[dict] | None = None
 
@@ -63,9 +61,6 @@ class Agent:
 
     def validate_request(self, request: EvalRequest) -> tuple[bool, str]:
         missing_roles = set(self.required_roles) - set(request.participants.keys())
-        # If CODING_AGENT_URL is set (e.g. via Amber slot), don't require it in the request
-        if self.coding_agent_url and "coding_agent" in missing_roles:
-            missing_roles.discard("coding_agent")
         if missing_roles:
             return False, f"Missing roles: {missing_roles}"
         missing_config_keys = set(self.required_config_keys) - set(request.config.keys())
@@ -263,19 +258,19 @@ class Agent:
             await updater.reject(new_agent_text_message(f"Invalid request: {e}"))
             return
 
-        # Prefer the slot URL (CODING_AGENT_URL via Amber mesh) over any URL
-        # the gateway sends in participants — the gateway proxy doesn't forward
-        # A2A discovery requests, so the direct mesh route is required.
-        participant_url = str(
-            self.coding_agent_url
-            or request.participants.get("coding_agent")
-            or ""
-        )
-        if not participant_url:
-            await updater.reject(
-                new_agent_text_message("No coding_agent URL in request and CODING_AGENT_URL not set")
-            )
-            return
+        # The gateway sends participant URLs from its own network namespace,
+        # which are unreachable from this container.  Use the local proxy slot
+        # (AMBER_HINT_PROXY) instead — Amber routes it to the coding agent
+        # through the mesh.  Fall back to request.participants for non-Amber
+        # environments (e.g. direct local testing).
+        import os, json as _json
+        proxy_hint = os.environ.get("AMBER_HINT_PROXY")
+        if proxy_hint:
+            participant_url = _json.loads(proxy_hint)["url"]
+            logger.info("Using proxy slot URL for coding_agent: %s", participant_url)
+        else:
+            participant_url = str(request.participants["coding_agent"])
+            logger.info("Using gateway-provided URL for coding_agent: %s", participant_url)
 
         await updater.update_status(
             TaskState.working,

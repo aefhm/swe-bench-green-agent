@@ -52,12 +52,30 @@ async def send_message(
 ):
     """Returns dict with context_id, response and status (if exists)"""
     async with httpx.AsyncClient(timeout=timeout) as httpx_client:
-        resolver = A2ACardResolver(httpx_client=httpx_client, base_url=base_url)
-        agent_card = await resolver.get_agent_card()
-        # Override the card's self-reported URL with the URL we actually used
-        # to reach it — the card may advertise 0.0.0.0 which isn't routable
-        # between containers.
-        agent_card.url = base_url.rstrip("/") + "/"
+        # Try to fetch the agent card; if the endpoint is behind a gateway
+        # proxy that doesn't forward /.well-known/agent-card.json, build a
+        # minimal card so the A2A client can still send messages.
+        url = base_url.rstrip("/") + "/"
+        try:
+            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=base_url)
+            agent_card = await resolver.get_agent_card()
+            agent_card.url = url
+        except Exception:
+            logger.info(
+                "Agent card fetch failed for %s — using minimal card (gateway proxy?)",
+                base_url,
+            )
+            from a2a.types import AgentCard, AgentCapabilities
+            agent_card = AgentCard(
+                name="remote-agent",
+                description="",
+                url=url,
+                version="0.0.0",
+                capabilities=AgentCapabilities(streaming=True),
+                skills=[],
+                defaultInputModes=["text"],
+                defaultOutputModes=["text"],
+            )
         config = ClientConfig(
             httpx_client=httpx_client,
             streaming=streaming,

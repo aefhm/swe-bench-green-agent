@@ -25,12 +25,10 @@ TERMINAL_STATES = {
 
 
 class Executor(AgentExecutor):
-    def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda",
-                 coding_agent_url: str | None = None):
+    def __init__(self, data_dir: str = "data", dockerhub_username: str = "jefzda"):
         self.agents: dict[str, Agent] = {}  # context_id -> agent instance
         self.data_dir = data_dir
         self.dockerhub_username = dockerhub_username
-        self.coding_agent_url = coding_agent_url
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         msg = context.message
@@ -55,7 +53,6 @@ class Executor(AgentExecutor):
             agent = Agent(
                 data_dir=self.data_dir,
                 dockerhub_username=self.dockerhub_username,
-                coding_agent_url=self.coding_agent_url,
             )
             self.agents[context_id] = agent
 

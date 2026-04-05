@@ -14,7 +14,10 @@
     entrypoint: "uv run python src/server.py --host 0.0.0.0 --port 9009",
 
     env: {
-      CODING_AGENT_URL: "${slots.coding_agent.url}",
+      // We receive participant URLs over A2A (request.participants), but we
+      // need to reference the slot somewhere in the program for Amber to
+      // allow the network connection.  This env var is not read by code.
+      AMBER_HINT_PROXY: "${slots.proxy}",
     },
 
     mounts: [
@@ -29,7 +32,7 @@
   },
 
   slots: {
-    coding_agent: { kind: "a2a" },
+    proxy: { kind: "a2a" },
   },
 
   provides: {

@@ -38,8 +38,6 @@ def main():
     )
     args = parser.parse_args()
 
-    coding_agent_url = os.environ.get("CODING_AGENT_URL")
-
     # ── Build A2A server ──
     skill = AgentSkill(
         id="swe-bench-pro-eval",
@@ -75,7 +73,6 @@ def main():
         agent_executor=Executor(
             data_dir=args.data_dir,
             dockerhub_username=args.dockerhub_username,
-            coding_agent_url=coding_agent_url,
         ),
         task_store=InMemoryTaskStore(),
     )

@@ -59,7 +59,6 @@ def agent(data_dir):
     return Agent(
         data_dir=data_dir,
         dockerhub_username="testuser",
-        coding_agent_url="http://fake-agent:9009",
     )
 
 
