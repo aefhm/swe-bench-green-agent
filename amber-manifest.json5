@@ -14,9 +14,9 @@
     entrypoint: "uv run python src/server.py --host 0.0.0.0 --port 9009",
 
     env: {
-      // We receive participant URLs over A2A (request.participants), but we
-      // need to reference the slot somewhere in the program for Amber to
-      // allow the network connection.  This env var is not read by code.
+      // Mesh route to the gateway proxy.  The green agent reads this at
+      // runtime and rebases participant URLs onto it so A2A calls route
+      // through the gateway proxy via the mesh.
       AMBER_HINT_PROXY: "${slots.proxy}",
     },
 

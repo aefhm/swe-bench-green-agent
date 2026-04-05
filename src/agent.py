@@ -260,9 +260,10 @@ class Agent:
 
         # The gateway sends participant URLs from its own network namespace,
         # which are unreachable from this container.  Use the local proxy slot
-        # (AMBER_HINT_PROXY) instead — Amber routes it to the coding agent
-        # through the mesh.  Fall back to request.participants for non-Amber
-        # environments (e.g. direct local testing).
+        # (AMBER_HINT_PROXY) instead — the mesh A2A HTTP plugin rewrites URLs
+        # transparently so the A2A client routes through the mesh.
+        # Fall back to request.participants for non-Amber environments
+        # (e.g. direct local testing).
         import os, json as _json
         proxy_hint = os.environ.get("AMBER_HINT_PROXY")
         if proxy_hint:
