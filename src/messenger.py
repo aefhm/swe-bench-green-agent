@@ -89,6 +89,12 @@ async def send_message(
 
         outbound_msg = create_message(text=message, context_id=context_id)
         outputs = {"response": "", "context_id": None}
+        logger.info(
+            "Sending A2A message to %s (streaming=%s, context_id=%s)",
+            base_url,
+            streaming,
+            context_id,
+        )
 
         async for event in client.send_message(outbound_msg):
             match event:
@@ -96,11 +102,26 @@ async def send_message(
                     outputs["context_id"] = msg.context_id
                     outputs["response"] = merge_parts(msg.parts)
                     outputs["status"] = "completed"
+                    logger.info(
+                        "Received direct message response from %s (context_id=%s, response_len=%d)",
+                        base_url,
+                        msg.context_id,
+                        len(outputs["response"]),
+                    )
                     return outputs
 
                 case (task, _update):
                     outputs["context_id"] = task.context_id
                     outputs["status"] = task.status.state.value
+                    logger.info(
+                        "Received task event from %s (task_id=%s, context_id=%s, state=%s, artifacts=%d, has_status_message=%s)",
+                        base_url,
+                        task.id,
+                        task.context_id,
+                        outputs["status"],
+                        len(task.artifacts or []),
+                        bool(task.status.message),
+                    )
 
                     if outputs["status"] not in TERMINAL_TASK_STATES:
                         continue
@@ -113,11 +134,20 @@ async def send_message(
                         parts.extend(task.status.message.parts)
 
                     outputs["response"] = merge_parts(parts)
+                    logger.info(
+                        "Returning terminal task event from %s (task_id=%s, state=%s, response_len=%d)",
+                        base_url,
+                        task.id,
+                        outputs["status"],
+                        len(outputs["response"]),
+                    )
                     return outputs
 
                 case _:
+                    logger.info("Received unhandled A2A event from %s: %r", base_url, event)
                     continue
 
+        logger.warning("A2A stream to %s ended without a terminal response", base_url)
         return outputs
 
 
