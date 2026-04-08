@@ -57,7 +57,10 @@ async def send_message(
         # minimal card so the A2A client can still send messages.
         url = base_url.rstrip("/") + "/"
         try:
-            resolver = A2ACardResolver(httpx_client=httpx_client, base_url=base_url)
+            resolver = A2ACardResolver(
+                httpx_client=httpx_client,
+                base_url=base_url,
+            )
             agent_card = await resolver.get_agent_card()
             agent_card.url = url
         except Exception:
@@ -139,7 +142,7 @@ class Messenger:
             base_url=url,
             context_id=None if new_conversation else self._context_ids.get(url, None),
             timeout=timeout,
-            streaming=True,
+            streaming=False,
         )
         if outputs.get("status", "completed") != "completed":
             raise RuntimeError(f"{url} responded with: {outputs}")

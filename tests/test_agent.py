@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from agent import Agent
 from evaluator import EvalResult
+from messenger import Messenger, send_message
 
 
 @pytest.fixture
@@ -307,6 +308,34 @@ class TestResolveParticipantUrl:
             result = agent._resolve_participant_url(participants, "coding_agent")
 
         assert result == "http://127.0.0.1:20000/coding_agent"
+
+
+class TestMessengerMode:
+    @pytest.mark.asyncio
+    async def test_talk_to_agent_uses_non_streaming_requests(self):
+        messenger = Messenger()
+
+        with patch("messenger.send_message", new_callable=AsyncMock) as mock_send:
+            mock_send.return_value = {
+                "response": '{"patch": "diff --git a/foo b/foo"}',
+                "context_id": "ctx-1",
+                "status": "completed",
+            }
+
+            response = await messenger.talk_to_agent(
+                message="hello",
+                url="http://fake-agent:9009",
+                timeout=42,
+            )
+
+        assert response == '{"patch": "diff --git a/foo b/foo"}'
+        mock_send.assert_awaited_once_with(
+            message="hello",
+            base_url="http://fake-agent:9009",
+            context_id=None,
+            timeout=42,
+            streaming=False,
+        )
 
 
 # ── _extract_patch ────────────────────────────────────────────────
