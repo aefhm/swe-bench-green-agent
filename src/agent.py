@@ -68,6 +68,22 @@ class Agent:
             return False, f"Missing config keys: {missing_config_keys}"
         return True, "ok"
 
+    def _resolve_participant_url(self, participants: dict[str, HttpUrl], role: str) -> str:
+        """Resolve a participant URL using the same route shape as the gateway."""
+        gateway_url = str(participants[role])
+
+        import os
+
+        proxy_hint = os.environ.get("AMBER_HINT_PROXY")
+        if not proxy_hint:
+            logger.info("Using gateway-provided URL for %s: %s", role, gateway_url)
+            return gateway_url
+
+        proxy_url = json.loads(proxy_hint)["url"]
+        participant_url = f"{proxy_url.rstrip('/')}/{role}"
+        logger.info("Using proxy URL for %s: %s", role, participant_url)
+        return participant_url
+
     def _select_instances(self, config: dict[str, Any]) -> list[dict]:
         """Select which instances to evaluate based on config.
 
@@ -258,20 +274,13 @@ class Agent:
             await updater.reject(new_agent_text_message(f"Invalid request: {e}"))
             return
 
-        # The gateway sends participant URLs from its own network namespace,
-        # which are unreachable from this container.  Use the local proxy slot
-        # (AMBER_HINT_PROXY) instead — the mesh A2A HTTP plugin rewrites URLs
-        # transparently so the A2A client routes through the mesh.
-        # Fall back to request.participants for non-Amber environments
-        # (e.g. direct local testing).
-        import os, json as _json
-        proxy_hint = os.environ.get("AMBER_HINT_PROXY")
-        if proxy_hint:
-            participant_url = _json.loads(proxy_hint)["url"]
-            logger.info("Using proxy slot URL for coding_agent: %s", participant_url)
-        else:
-            participant_url = str(request.participants["coding_agent"])
-            logger.info("Using gateway-provided URL for coding_agent: %s", participant_url)
+        # The gateway routes participants through /<role> on its proxy. Inside
+        # Amber, the gateway's own loopback URL is not reachable from this
+        # container, so use the local proxy hint with the same /<role> route
+        # shape the gateway itself uses.
+        participant_url = self._resolve_participant_url(
+            request.participants, "coding_agent"
+        )
 
         await updater.update_status(
             TaskState.working,

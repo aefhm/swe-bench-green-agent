@@ -284,6 +284,31 @@ class TestRunBatch:
         assert call_count == 2
 
 
+# ── participant URL resolution ────────────────────────────────────
+
+
+class TestResolveParticipantUrl:
+    def test_uses_gateway_url_without_proxy_hint(self, agent):
+        participants = {"coding_agent": "http://127.0.0.1:8080/coding_agent/"}
+
+        with patch.dict("os.environ", {}, clear=False):
+            result = agent._resolve_participant_url(participants, "coding_agent")
+
+        assert result == "http://127.0.0.1:8080/coding_agent/"
+
+    def test_builds_proxy_url_from_role_when_proxy_hint_present(self, agent):
+        participants = {"coding_agent": "http://127.0.0.1:8080/coding_agent/"}
+
+        with patch.dict(
+            "os.environ",
+            {"AMBER_HINT_PROXY": '{"url":"http://127.0.0.1:20000"}'},
+            clear=False,
+        ):
+            result = agent._resolve_participant_url(participants, "coding_agent")
+
+        assert result == "http://127.0.0.1:20000/coding_agent"
+
+
 # ── _extract_patch ────────────────────────────────────────────────
 
 
