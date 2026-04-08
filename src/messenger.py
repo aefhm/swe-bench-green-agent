@@ -19,6 +19,7 @@ from a2a.types import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 600  # 10 minutes — coding agents need time
+TERMINAL_TASK_STATES = {"completed", "failed", "canceled", "rejected"}
 
 
 def create_message(
@@ -87,29 +88,35 @@ async def send_message(
         client = factory.create(agent_card)
 
         outbound_msg = create_message(text=message, context_id=context_id)
-        last_event = None
         outputs = {"response": "", "context_id": None}
 
         async for event in client.send_message(outbound_msg):
-            last_event = event
+            match event:
+                case Message() as msg:
+                    outputs["context_id"] = msg.context_id
+                    outputs["response"] = merge_parts(msg.parts)
+                    outputs["status"] = "completed"
+                    return outputs
 
-        match last_event:
-            case Message() as msg:
-                outputs["context_id"] = msg.context_id
-                outputs["response"] += merge_parts(msg.parts)
+                case (task, _update):
+                    outputs["context_id"] = task.context_id
+                    outputs["status"] = task.status.state.value
 
-            case (task, update):
-                outputs["context_id"] = task.context_id
-                outputs["status"] = task.status.state.value
-                msg = task.status.message
-                if msg:
-                    outputs["response"] += merge_parts(msg.parts)
-                if task.artifacts:
-                    for artifact in task.artifacts:
-                        outputs["response"] += merge_parts(artifact.parts)
+                    if outputs["status"] not in TERMINAL_TASK_STATES:
+                        continue
 
-            case _:
-                pass
+                    parts = []
+                    if task.artifacts:
+                        for artifact in task.artifacts:
+                            parts.extend(artifact.parts)
+                    elif task.status.message:
+                        parts.extend(task.status.message.parts)
+
+                    outputs["response"] = merge_parts(parts)
+                    return outputs
+
+                case _:
+                    continue
 
         return outputs
 
@@ -142,7 +149,7 @@ class Messenger:
             base_url=url,
             context_id=None if new_conversation else self._context_ids.get(url, None),
             timeout=timeout,
-            streaming=False,
+            streaming=True,
         )
         if outputs.get("status", "completed") != "completed":
             raise RuntimeError(f"{url} responded with: {outputs}")

@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
+from a2a.types import Part, TaskState, TextPart
 
 # Add src to path so we can import directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -312,7 +313,7 @@ class TestResolveParticipantUrl:
 
 class TestMessengerMode:
     @pytest.mark.asyncio
-    async def test_talk_to_agent_uses_non_streaming_requests(self):
+    async def test_talk_to_agent_uses_streaming_requests(self):
         messenger = Messenger()
 
         with patch("messenger.send_message", new_callable=AsyncMock) as mock_send:
@@ -334,8 +335,65 @@ class TestMessengerMode:
             base_url="http://fake-agent:9009",
             context_id=None,
             timeout=42,
-            streaming=False,
+            streaming=True,
         )
+
+    @pytest.mark.asyncio
+    async def test_send_message_returns_on_terminal_task_event(self):
+        class FakeAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakeResolver:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def get_agent_card(self):
+                return MagicMock(url="http://fake-agent:9009/")
+
+        artifact = MagicMock(
+            parts=[Part(root=TextPart(kind="text", text='{"patch": "diff --git a/foo b/foo"}'))]
+        )
+        task = MagicMock(
+            context_id="ctx-1",
+            artifacts=[artifact],
+        )
+        task.status.state.value = TaskState.completed.value
+        task.status.message = None
+
+        class FakeClient:
+            async def send_message(self, outbound_msg):
+                yield (task, object())
+                pytest.fail("send_message should return immediately after terminal event")
+
+        class FakeFactory:
+            def __init__(self, config):
+                pass
+
+            def create(self, agent_card):
+                return FakeClient()
+
+        with patch("messenger.httpx.AsyncClient", FakeAsyncClient), \
+             patch("messenger.A2ACardResolver", FakeResolver), \
+             patch("messenger.ClientFactory", FakeFactory):
+            outputs = await send_message(
+                message="hello",
+                base_url="http://fake-agent:9009",
+                streaming=True,
+                timeout=5,
+            )
+
+        assert outputs == {
+            "context_id": "ctx-1",
+            "response": '{"patch": "diff --git a/foo b/foo"}',
+            "status": "completed",
+        }
 
 
 # ── _extract_patch ────────────────────────────────────────────────
