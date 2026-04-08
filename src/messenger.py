@@ -139,6 +139,7 @@ class Messenger:
             base_url=url,
             context_id=None if new_conversation else self._context_ids.get(url, None),
             timeout=timeout,
+            streaming=True,
         )
         if outputs.get("status", "completed") != "completed":
             raise RuntimeError(f"{url} responded with: {outputs}")
