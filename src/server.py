@@ -1,8 +1,12 @@
 import argparse
 import logging
 import os
+from typing import Any
 
 import uvicorn
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -17,6 +21,25 @@ from a2a.types import (
 )
 
 from executor import Executor
+
+
+# ── Shared eval state for /results endpoint ─────────────────────────
+# Written by the Executor during evaluation, read by the /results HTTP
+# handler.  Same contract as the agentbeats gateway results endpoint.
+eval_state: dict[str, Any] = {
+    "status": "running",
+    "result": None,
+    "error": None,
+}
+
+
+async def results_handler(request: Request) -> JSONResponse:
+    """HTTP endpoint that mirrors the gateway's results polling interface."""
+    if eval_state["status"] == "running":
+        return JSONResponse({"status": "running"})
+    if eval_state["status"] == "failed":
+        return JSONResponse({"status": "failed", "error": eval_state["error"]})
+    return JSONResponse(eval_state["result"])
 
 
 def main():
@@ -82,6 +105,10 @@ def main():
         http_handler=request_handler,
     )
     app = a2a_app.build()
+
+    # ── Mount /results endpoint ──
+    app.routes.insert(0, Route("/results", results_handler, methods=["GET"]))
+    app.routes.insert(0, Route("/results/", results_handler, methods=["GET"]))
 
     uvicorn.run(app, host=args.host, port=args.port)
 
