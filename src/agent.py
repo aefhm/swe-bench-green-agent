@@ -15,6 +15,7 @@ Flow:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -224,18 +225,22 @@ class Agent:
                     f"[{i + 1}/{len(instances)}] Evaluating patch for {uid}..."
                 )
 
-            result = evaluate_patch(
-                instance=instance,
-                patch=patch,
-                data_dir=self.data_dir,
-                dockerhub_username=self.dockerhub_username,
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: evaluate_patch(
+                    instance=instance,
+                    patch=patch,
+                    data_dir=self.data_dir,
+                    dockerhub_username=self.dockerhub_username,
+                ),
             )
             results.append(result)
 
             # Remove the pulled evaluation image to reclaim disk space.
             # Each instance uses a different project-specific image (~1-2 GB),
             # so without cleanup they accumulate and can fill the runner disk.
-            self._cleanup_eval_image(uid, repo)
+            await loop.run_in_executor(None, self._cleanup_eval_image, uid, repo)
 
         # Compute summary
         total = len(results)
