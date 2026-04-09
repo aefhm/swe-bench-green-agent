@@ -48,8 +48,7 @@
   metadata: {
     participant_roles: ["coding_agent"],
     assessment_config: {
-      num_instances: 20,
-      num_shards: 2,
+      num_shards: 20,
     },
   },
 }
