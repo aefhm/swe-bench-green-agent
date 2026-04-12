@@ -49,6 +49,7 @@
     participant_roles: ["coding_agent"],
     assessment_config: {
       num_shards: 20,
+      num_instances: 300,
     },
   },
 }
