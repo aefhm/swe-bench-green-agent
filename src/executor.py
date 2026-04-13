@@ -15,6 +15,10 @@ from a2a.utils import (
 
 from agent import Agent
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 TERMINAL_STATES = {
     TaskState.completed,
@@ -64,7 +68,7 @@ class Executor(AgentExecutor):
             if not updater._terminal_state_reached:
                 await updater.complete()
         except Exception as e:
-            print(f"Task failed with agent error: {e}")
+            logger.error("Task failed with agent error: %s", e)
             await updater.failed(
                 new_agent_text_message(f"Agent error: {e}", context_id=context_id, task_id=task.id)
             )

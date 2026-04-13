@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -36,13 +39,7 @@ def get_dockerhub_image_uri(uid: str, dockerhub_username: str, repo_name: str = 
     repo_base, repo_name_only = repo_name.lower().split("/")
     hsh = uid.replace("instance_", "")
 
-    if uid == "instance_element-hq__element-web-ec0f940ef0e8e3b61078f145f34dc40d1938e6c5-vnan":
-        repo_name_only = "element-web"
-    elif "element-hq" in repo_name.lower() and "element-web" in repo_name.lower():
-        repo_name_only = "element"
-        if hsh.endswith("-vnan"):
-            hsh = hsh[:-5]
-    elif hsh.endswith("-vnan"):
+    if hsh.endswith("-vnan"):
         hsh = hsh[:-5]
 
     tag = f"{repo_base}.{repo_name_only}-{hsh}"
@@ -160,7 +157,7 @@ def evaluate_patch(
     # in Docker-outside-of-Docker, volume paths are resolved on the HOST,
     # not inside this container.
     image_uri = get_dockerhub_image_uri(uid, dockerhub_username, repo)
-    print(f"[evaluator] Using image: {image_uri}")
+    logger.info("Using image: %s", image_uri)
 
     client = docker_sdk.from_env()
 
@@ -171,7 +168,7 @@ def evaluate_patch(
     except Exception:
         try:
             client.images.get(image_uri)
-            print(f"[evaluator] Using locally cached image: {image_uri}")
+            logger.info("Using locally cached image: %s", image_uri)
         except Exception as e:
             return EvalResult(
                 instance_id=uid,
@@ -218,7 +215,7 @@ def evaluate_patch(
         result = container.wait(timeout=timeout)
         status_code = result.get("StatusCode", 1) if isinstance(result, dict) else 1
         if status_code != 0:
-            print(f"[evaluator] Entryscript exited with code {status_code} for {uid}")
+            logger.warning("Entryscript exited with code %d for %s", status_code, uid)
 
         # Extract output.json from the container
         try:
@@ -237,7 +234,7 @@ def evaluate_patch(
             # Also grab container logs for debugging
             try:
                 logs = container.logs(tail=50).decode("utf-8", errors="replace")
-                print(f"[evaluator] Container logs for {uid}:\n{logs}")
+                logger.info("Container logs for %s:\n%s", uid, logs)
             except Exception:
                 pass
             return EvalResult(
